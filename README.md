@@ -188,6 +188,15 @@ Updates the CLI to the latest stable release.
 | `MERGE_MATE_NO_UPDATE_CHECK` | Set to `1` to disable update notifications on startup                                             |
 | `LOG_LEVEL`                  | Logging verbosity: `error` \| `warn` \| `info` \| `debug`. Disables interactive TTY mode when set |
 
+## For AI agents
+
+Every command keeps its human output, but result commands (`status`, `rebase`, `merge`, `resolve`, `apply`, `rollback`) also speak a machine-readable contract:
+
+- `--json` (or `MERGE_MATE_OUTPUT=json`) emits a single JSON envelope on stdout and routes human output to stderr.
+- Exit codes are semantic: `0` ok, `2` invalid input, `3` needs review, `4` needs human, `5` auth, `6` transient/retryable.
+
+See [AGENTS.md](./AGENTS.md) for the envelope shapes, the full exit-code table, the behavioral invariants, and a reference agent flow.
+
 ## Typical Workflow
 
 ### Sync and auto-apply
