@@ -6,6 +6,7 @@ INSTALL_DIR="${MERGE_MATE_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_NAME="merge-mate"
 VERSION=""
 PLATFORM=""
+KEEP_QUARANTINE=false
 TMP_DIR=""
 
 cleanup() {
@@ -26,6 +27,8 @@ Usage: install.sh [OPTIONS]
 Options:
   --version VERSION   Install specific version (e.g., 0.1.0)
   --dir DIRECTORY     Installation directory (default: ~/.local/bin)
+  --keep-quarantine   Keep the macOS quarantine attribute on the downloaded binary
+                      (Gatekeeper will then inspect it on first run)
   --help              Show this help message
 
 Environment:
@@ -165,7 +168,12 @@ download_and_verify() {
   info "Checksum verified"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    xattr -d com.apple.quarantine "$TMP_DIR/$binary_name" 2>/dev/null || true
+    if [[ "$KEEP_QUARANTINE" == true ]]; then
+      info "Keeping the macOS quarantine attribute; Gatekeeper will inspect the binary on first run"
+    else
+      info "Removing the macOS quarantine attribute (checksum was verified above; use --keep-quarantine to keep it)"
+      xattr -d com.apple.quarantine "$TMP_DIR/$binary_name" 2>/dev/null || true
+    fi
   fi
 
   mkdir -p "$INSTALL_DIR" || error "Failed to create installation directory $INSTALL_DIR"
@@ -212,6 +220,10 @@ main() {
         require_value "--dir" "${2:-}"
         INSTALL_DIR="$2"
         shift 2
+        ;;
+      --keep-quarantine)
+        KEEP_QUARANTINE=true
+        shift
         ;;
       --help)
         usage
