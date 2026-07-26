@@ -26,12 +26,22 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:MERGE_MATE_REPO) { $env:MERGE_MATE_REPO } else { "gitkraken/merge-mate-cli" }
-$DefaultInstallDir = Join-Path $env:LOCALAPPDATA "merge-mate"
-$InstallDir = if ($InstallDir) { $InstallDir } else { $DefaultInstallDir }
-$BinName = "merge-mate.exe"
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+catch {
+    Write-Warning "Could not enable TLS 1.2; downloads may fail on this system: $($_.Exception.Message)"
+}
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$Repo = if ($env:MERGE_MATE_REPO) { $env:MERGE_MATE_REPO } else { "gitkraken/merge-mate-cli" }
+if (-not $InstallDir) {
+    if (-not $env:LOCALAPPDATA) {
+        Write-Host "Error: LOCALAPPDATA is not set; pass -InstallDir to choose an installation directory" -ForegroundColor Red
+        exit 1
+    }
+    $InstallDir = Join-Path $env:LOCALAPPDATA "merge-mate"
+}
+$BinName = "merge-mate.exe"
 
 function Write-Info {
     param([string]$Message)
@@ -58,6 +68,19 @@ function Test-Version {
     }
 }
 
+function Get-ErrorDetail {
+    param($ErrorRecord)
+
+    $Detail = $ErrorRecord.Exception.Message
+    $Response = $ErrorRecord.Exception.Response
+
+    if ($Response -and $Response.StatusCode) {
+        $Detail = "HTTP $([int]$Response.StatusCode) $($Response.StatusCode) - $Detail"
+    }
+
+    return $Detail
+}
+
 function Test-Architecture {
     if (-not [Environment]::Is64BitOperatingSystem) {
         Write-Err "Merge Mate CLI requires a 64-bit Windows installation"
@@ -69,16 +92,43 @@ function Get-LatestVersion {
 
     try {
         $Releases = Invoke-RestMethod -Uri $ReleasesUrl -UseBasicParsing
-        $CliRelease = $Releases | Where-Object { $_.tag_name -match "^v\d+\.\d+\.\d+$" } | Select-Object -First 1
-
-        if (-not $CliRelease) {
-            Write-Err "No CLI releases found"
-        }
-
-        return $CliRelease.tag_name -replace "^v", ""
     }
     catch {
-        Write-Err "Failed to fetch releases: $_"
+        Write-Err "Failed to fetch releases from ${ReleasesUrl}: $(Get-ErrorDetail $_). Check your internet connection, the GitHub API rate limit, or pass -Version"
+    }
+
+    $CliRelease = $Releases |
+        Where-Object { -not $_.draft -and $_.tag_name -match "^v\d+\.\d+\.\d+$" } |
+        Select-Object -First 1
+
+    if (-not $CliRelease) {
+        Write-Err "No stable release found for $Repo. Check the repository or pass -Version"
+    }
+
+    return $CliRelease.tag_name -replace "^v", ""
+}
+
+function Add-ToUserPath {
+    param([string]$Directory)
+
+    try {
+        $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $Entries = @($UserPath -split ";" | Where-Object { $_ })
+
+        if ($Entries -contains $Directory) {
+            return
+        }
+
+        $NewPath = (@($Entries) + $Directory) -join ";"
+        [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
+
+        Write-Host ""
+        Write-Host "Added $Directory to your PATH." -ForegroundColor Yellow
+        Write-Host "Restart your terminal or run: `$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User')" -ForegroundColor Yellow
+    }
+    catch {
+        Write-Warning "Installed successfully, but failed to add $Directory to your PATH: $($_.Exception.Message)"
+        Write-Warning "Add it manually, or run merge-mate from $Directory"
     }
 }
 
@@ -102,75 +152,103 @@ function Install-MergeMate {
     $ChecksumsUrl = "https://github.com/$Repo/releases/download/$Tag/checksums-sha256.txt"
 
     $TempDir = Join-Path $env:TEMP "merge-mate-install-$(Get-Random)"
-    New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+
+    try {
+        New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+    }
+    catch {
+        Write-Err "Failed to create temporary directory ${TempDir}: $($_.Exception.Message)"
+    }
 
     try {
         Write-Info "Downloading $BinaryName (v$Version)..."
         $BinaryPath = Join-Path $TempDir $BinaryName
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $BinaryPath -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $DownloadUrl -OutFile $BinaryPath -UseBasicParsing
+        }
+        catch {
+            Write-Err "Failed to download $DownloadUrl : $(Get-ErrorDetail $_). Version $Version may not exist for windows-x64"
+        }
 
         Write-Info "Verifying checksum..."
         $ChecksumsPath = Join-Path $TempDir "checksums.txt"
-        Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath -UseBasicParsing
+        }
+        catch {
+            Write-Err "Failed to download checksums from $ChecksumsUrl : $(Get-ErrorDetail $_)"
+        }
 
         $ChecksumsContent = Get-Content $ChecksumsPath
-        $ExpectedLines = @($ChecksumsContent | Where-Object {
-            $Fields = $_ -split "\s+"
-            $Fields.Count -ge 2 -and ($Fields[1] -replace '^\*', '') -eq $BinaryName
-        })
+        $BinaryNamePattern = "\s\*?$([regex]::Escape($BinaryName))\s*$"
+        $ExpectedLine = @($ChecksumsContent | Where-Object { $_ -match $BinaryNamePattern })
 
-        if ($ExpectedLines.Count -eq 0) {
-            Write-Err "Checksum not found for $BinaryName"
+        if ($ExpectedLine.Count -eq 0) {
+            Write-Err "Checksum not found for $BinaryName in $ChecksumsUrl"
         }
 
-        if ($ExpectedLines.Count -gt 1) {
-            Write-Err "Ambiguous checksum entries for $BinaryName"
-        }
-
-        $ExpectedChecksum = ($ExpectedLines[0] -split "\s+")[0].ToLower()
+        $ExpectedChecksum = ($ExpectedLine[0] -split "\s+")[0].ToLower()
         $ActualChecksum = Get-Checksum -FilePath $BinaryPath
 
         if ($ExpectedChecksum -ne $ActualChecksum) {
-            Write-Err "Checksum verification failed"
+            Write-Err "Checksum verification failed for $BinaryName (expected $ExpectedChecksum, got $ActualChecksum)"
         }
 
         Write-Info "Checksum verified"
 
         if (-not (Test-Path $InstallDir)) {
-            New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+            try {
+                New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+            }
+            catch {
+                Write-Err "Failed to create installation directory ${InstallDir}: $($_.Exception.Message)"
+            }
         }
 
         $DestPath = Join-Path $InstallDir $BinName
-        Move-Item -Path $BinaryPath -Destination $DestPath -Force
+        try {
+            Move-Item -Path $BinaryPath -Destination $DestPath -Force
+        }
+        catch {
+            Write-Err "Failed to install to ${DestPath}: $($_.Exception.Message). Close any running merge-mate process and check the directory permissions"
+        }
 
         Write-Info "Installed to $DestPath"
 
-        $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        if ($UserPath -notlike "*$InstallDir*") {
-            [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
-            Write-Host ""
-            Write-Host "Added $InstallDir to your PATH." -ForegroundColor Yellow
-            Write-Host "Restart your terminal or run: `$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User')" -ForegroundColor Yellow
-        }
+        Add-ToUserPath -Directory $InstallDir
     }
     finally {
-        Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path $TempDir) {
+            try {
+                Remove-Item -Path $TempDir -Recurse -Force
+            }
+            catch {
+                Write-Warning "Failed to remove temporary directory ${TempDir}: $($_.Exception.Message)"
+            }
+        }
     }
 }
 
-Test-Repo
-Test-Architecture
+try {
+    Test-Repo
+    Test-Architecture
 
-if (-not $Version) {
-    Write-Info "Detecting latest version..."
-    $Version = Get-LatestVersion
+    if (-not $Version) {
+        Write-Info "Detecting latest version..."
+        $Version = Get-LatestVersion
+    }
+
+    Test-Version -Value $Version
+
+    Install-MergeMate -Version $Version
 }
-
-Test-Version -Value $Version
-
-Install-MergeMate -Version $Version
+catch {
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ""
 Write-Host "✓ Merge Mate CLI v$Version installed successfully" -ForegroundColor Green
 Write-Host ""
 Write-Host "Run 'merge-mate --help' to get started"
+exit 0
