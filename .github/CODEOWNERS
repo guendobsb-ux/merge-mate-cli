@@ -1,0 +1,4 @@
+# Changes to the installers and to CI require an owner review.
+/install/ @guendobsb-ux
+/scripts/ @guendobsb-ux
+/.github/ @guendobsb-ux
