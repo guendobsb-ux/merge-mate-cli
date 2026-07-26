@@ -6,6 +6,7 @@ INSTALL_DIR="${MERGE_MATE_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_NAME="merge-mate"
 VERSION=""
 PLATFORM=""
+FORCE=false
 TMP_DIR=""
 
 cleanup() {
@@ -26,6 +27,7 @@ Usage: install.sh [OPTIONS]
 Options:
   --version VERSION   Install specific version (e.g., 0.1.0)
   --dir DIRECTORY     Installation directory (default: ~/.local/bin)
+  --force             Reinstall even if the target version is already installed
   --help              Show this help message
 
 Environment:
@@ -169,6 +171,15 @@ download_and_verify() {
   info "Installed to $INSTALL_DIR/$BIN_NAME"
 }
 
+get_installed_version() {
+  local binary="$1"
+  local output
+
+  output=$("$binary" --version 2>/dev/null) || return 1
+
+  echo "$output" | grep -o '[0-9][0-9a-zA-Z.+-]*' | head -1
+}
+
 check_path() {
   if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
@@ -202,6 +213,10 @@ main() {
         INSTALL_DIR="$2"
         shift 2
         ;;
+      --force)
+        FORCE=true
+        shift
+        ;;
       --help)
         usage
         exit 0
@@ -217,6 +232,28 @@ main() {
   if [[ -z "$VERSION" ]]; then
     info "Detecting latest version..."
     get_latest_version
+  fi
+
+  if [[ "$FORCE" != true ]]; then
+    local existing_binary="" installed_version=""
+
+    if [[ -x "$INSTALL_DIR/$BIN_NAME" ]]; then
+      existing_binary="$INSTALL_DIR/$BIN_NAME"
+    elif existing_binary=$(command -v "$BIN_NAME" 2>/dev/null); then
+      :
+    else
+      existing_binary=""
+    fi
+
+    if [[ -n "$existing_binary" ]]; then
+      installed_version=$(get_installed_version "$existing_binary") || installed_version=""
+
+      if [[ "$installed_version" == "$VERSION" ]]; then
+        info "merge-mate v$VERSION is already installed at $existing_binary"
+        info "Use --force to reinstall"
+        exit 0
+      fi
+    fi
   fi
 
   download_and_verify "$VERSION" "$PLATFORM"
