@@ -40,6 +40,10 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     env:
+      # GITLEAKS_VERSION and GITLEAKS_SHA256 are coupled: when bumping the
+      # version, update the hash to match the new
+      # gitleaks_<version>_linux_x64.tar.gz release asset. A stale hash causes
+      # the sha256sum check below to fail, which is intentional (fail closed).
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
     steps:
