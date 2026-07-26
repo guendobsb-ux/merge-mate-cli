@@ -31,6 +31,8 @@ $DefaultInstallDir = Join-Path $env:LOCALAPPDATA "merge-mate"
 $InstallDir = if ($InstallDir) { $InstallDir } else { $DefaultInstallDir }
 $BinName = "merge-mate.exe"
 
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 function Write-Info {
     param([string]$Message)
     Write-Host "==> $Message" -ForegroundColor Cyan
@@ -40,6 +42,20 @@ function Write-Err {
     param([string]$Message)
     Write-Host "Error: $Message" -ForegroundColor Red
     exit 1
+}
+
+function Test-Repo {
+    if ($Repo -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$') {
+        Write-Err "Invalid repository: $Repo (expected owner/name)"
+    }
+}
+
+function Test-Version {
+    param([string]$Value)
+
+    if ($Value -notmatch '^\d+\.\d+\.\d+([-+][A-Za-z0-9.]+)*$') {
+        Write-Err "Invalid version: $Value (expected semver, e.g. 0.1.0)"
+    }
 }
 
 function Test-Architecture {
@@ -98,13 +114,20 @@ function Install-MergeMate {
         Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath -UseBasicParsing
 
         $ChecksumsContent = Get-Content $ChecksumsPath
-        $ExpectedLine = $ChecksumsContent | Where-Object { $_ -match $BinaryName }
+        $ExpectedLines = @($ChecksumsContent | Where-Object {
+            $Fields = $_ -split "\s+"
+            $Fields.Count -ge 2 -and ($Fields[1] -replace '^\*', '') -eq $BinaryName
+        })
 
-        if (-not $ExpectedLine) {
+        if ($ExpectedLines.Count -eq 0) {
             Write-Err "Checksum not found for $BinaryName"
         }
 
-        $ExpectedChecksum = ($ExpectedLine -split "\s+")[0].ToLower()
+        if ($ExpectedLines.Count -gt 1) {
+            Write-Err "Ambiguous checksum entries for $BinaryName"
+        }
+
+        $ExpectedChecksum = ($ExpectedLines[0] -split "\s+")[0].ToLower()
         $ActualChecksum = Get-Checksum -FilePath $BinaryPath
 
         if ($ExpectedChecksum -ne $ActualChecksum) {
@@ -135,12 +158,15 @@ function Install-MergeMate {
     }
 }
 
+Test-Repo
 Test-Architecture
 
 if (-not $Version) {
     Write-Info "Detecting latest version..."
     $Version = Get-LatestVersion
 }
+
+Test-Version -Value $Version
 
 Install-MergeMate -Version $Version
 

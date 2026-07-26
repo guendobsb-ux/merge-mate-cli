@@ -42,6 +42,18 @@ info() {
   echo "==> $1"
 }
 
+validate_repo() {
+  if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    error "Invalid repository: $REPO (expected owner/name)"
+  fi
+}
+
+validate_version() {
+  if [[ ! "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.]+)*$ ]]; then
+    error "Invalid version: $1 (expected semver, e.g. 0.1.0)"
+  fi
+}
+
 detect_platform() {
   local os arch
 
@@ -104,10 +116,14 @@ download_and_verify() {
   fi
 
   local expected_checksum actual_checksum
-  expected_checksum=$(grep "$binary_name" "$TMP_DIR/checksums.txt" | awk '{print $1}')
+  expected_checksum=$(awk -v name="$binary_name" '{ sub(/^\*/, "", $2); if ($2 == name) print $1 }' "$TMP_DIR/checksums.txt")
 
   if [[ -z "$expected_checksum" ]]; then
     error "Checksum not found for $binary_name"
+  fi
+
+  if [[ $(wc -l <<<"$expected_checksum") -ne 1 ]]; then
+    error "Ambiguous checksum entries for $binary_name"
   fi
 
   if command -v sha256sum &>/dev/null; then
@@ -150,10 +166,12 @@ main() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --version)
+        [[ $# -ge 2 ]] || error "--version requires an argument"
         VERSION="$2"
         shift 2
         ;;
       --dir)
+        [[ $# -ge 2 ]] || error "--dir requires an argument"
         INSTALL_DIR="$2"
         shift 2
         ;;
@@ -167,6 +185,8 @@ main() {
     esac
   done
 
+  validate_repo
+
   local platform
   platform=$(detect_platform)
 
@@ -174,6 +194,8 @@ main() {
     info "Detecting latest version..."
     VERSION=$(get_latest_version)
   fi
+
+  validate_version "$VERSION"
 
   download_and_verify "$VERSION" "$platform"
   check_path
