@@ -7,6 +7,7 @@ BIN_NAME="merge-mate"
 VERSION=""
 PLATFORM=""
 FORCE=false
+DIR_SET=false
 KEEP_QUARANTINE=false
 TMP_DIR=""
 
@@ -230,6 +231,7 @@ main() {
       --dir)
         require_value "--dir" "${2:-}"
         INSTALL_DIR="$2"
+        DIR_SET=true
         shift 2
         ;;
       --force)
@@ -271,7 +273,7 @@ main() {
 
     if [[ -x "$INSTALL_DIR/$BIN_NAME" ]]; then
       existing_binary="$INSTALL_DIR/$BIN_NAME"
-    elif existing_binary=$(command -v "$BIN_NAME" 2>/dev/null); then
+    elif [[ "$DIR_SET" != true ]] && existing_binary=$(command -v "$BIN_NAME" 2>/dev/null); then
       :
     else
       existing_binary=""

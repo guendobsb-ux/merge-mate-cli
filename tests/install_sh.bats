@@ -22,7 +22,9 @@ load_script() {
   # The script enables `set -euo pipefail`, which leaks into the test shell and
   # makes assertions abort the whole run. Disable it here; individual functions
   # do their own error handling.
-  set +euo pipefail
+  set -e
+  set +u
+  set +o pipefail
 }
 
 # ---------------------------------------------------------------------------
@@ -82,33 +84,29 @@ load_script() {
 @test "detect_platform: linux x86_64 -> linux-x64" {
   load_script
   uname() { case "$1" in -s) echo "Linux";; -m) echo "x86_64";; esac; }
-  run detect_platform
-  [ "$status" -eq 0 ]
-  [ "$output" = "linux-x64" ]
+  detect_platform
+  [ "$PLATFORM" = "linux-x64" ]
 }
 
 @test "detect_platform: darwin arm64 -> darwin-arm64" {
   load_script
   uname() { case "$1" in -s) echo "Darwin";; -m) echo "arm64";; esac; }
-  run detect_platform
-  [ "$status" -eq 0 ]
-  [ "$output" = "darwin-arm64" ]
+  detect_platform
+  [ "$PLATFORM" = "darwin-arm64" ]
 }
 
 @test "detect_platform: aarch64 normalizes to arm64 (darwin)" {
   load_script
   uname() { case "$1" in -s) echo "Darwin";; -m) echo "aarch64";; esac; }
-  run detect_platform
-  [ "$status" -eq 0 ]
-  [ "$output" = "darwin-arm64" ]
+  detect_platform
+  [ "$PLATFORM" = "darwin-arm64" ]
 }
 
 @test "detect_platform: amd64 normalizes to x64 (linux)" {
   load_script
   uname() { case "$1" in -s) echo "Linux";; -m) echo "amd64";; esac; }
-  run detect_platform
-  [ "$status" -eq 0 ]
-  [ "$output" = "linux-x64" ]
+  detect_platform
+  [ "$PLATFORM" = "linux-x64" ]
 }
 
 @test "detect_platform: unsupported OS errors" {
@@ -149,6 +147,7 @@ load_script() {
 
 @test "get_latest_version: extracts newest stable tag, skipping prereleases" {
   load_script
+  # get_latest_version appends the HTTP status via curl -w '\n%{http_code}'.
   curl() {
     cat <<'JSON'
 [
@@ -156,19 +155,19 @@ load_script() {
   {"tag_name": "v1.1.0"},
   {"tag_name": "v1.0.0"}
 ]
+200
 JSON
   }
-  run get_latest_version
-  [ "$status" -eq 0 ]
-  [ "$output" = "1.1.0" ]
+  get_latest_version
+  [ "$VERSION" = "1.1.0" ]
 }
 
 @test "get_latest_version: errors when no version can be parsed" {
   load_script
-  curl() { echo "[]"; }
+  curl() { printf '[]\n200\n'; }
   run get_latest_version
   [ "$status" -eq 1 ]
-  [[ "$output" == *"Could not determine latest version"* ]]
+  [[ "$output" == *"No stable release found"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -215,7 +214,7 @@ JSON
 @test "main: --version and --dir feed download_and_verify" {
   load_script
   # Stub the pieces main orchestrates so we can assert wiring only.
-  detect_platform() { echo "linux-x64"; }
+  detect_platform() { PLATFORM="linux-x64"; }
   get_latest_version() { echo "SHOULD_NOT_BE_CALLED"; }
   check_path() { :; }
   download_and_verify() { echo "dv:$1:$2:$INSTALL_DIR"; }
@@ -228,8 +227,8 @@ JSON
 
 @test "main: without --version auto-detects latest" {
   load_script
-  detect_platform() { echo "linux-x64"; }
-  get_latest_version() { echo "3.2.1"; }
+  detect_platform() { PLATFORM="linux-x64"; }
+  get_latest_version() { VERSION="3.2.1"; }
   check_path() { :; }
   download_and_verify() { echo "dv:$1:$2"; }
   run main
