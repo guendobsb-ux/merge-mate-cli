@@ -21,10 +21,23 @@ pass() {
 }
 
 strip_shell_comments() {
+  # Enter a heredoc doc block on any "<<" / "<<-" redirection, capturing the
+  # bare delimiter word so the matching terminator can be recognised regardless
+  # of the delimiter name, quoting, or terminator indentation (<<- tabs).
   awk '
-    /^[[:space:]]*cat <<EOF/ { in_doc = 1; next }
-    in_doc && /^EOF$/ { in_doc = 0; next }
-    in_doc { next }
+    !in_doc && match($0, /<<-?[[:space:]]*["'\'']?[A-Za-z_][A-Za-z0-9_]*["'\'']?/) {
+      delim = substr($0, RSTART, RLENGTH)
+      gsub(/^<<-?[[:space:]]*["'\'']?/, "", delim)
+      gsub(/["'\'']?$/, "", delim)
+      in_doc = 1
+      next
+    }
+    in_doc {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      if (line == delim) { in_doc = 0 }
+      next
+    }
     /^[[:space:]]*#/ { next }
     { print }
   ' "$1"
@@ -32,10 +45,29 @@ strip_shell_comments() {
 
 strip_powershell_comments() {
   awk '
-    /<#/ { in_doc = 1 }
-    in_doc { if (/#>/) { in_doc = 0 }; next }
-    /^[[:space:]]*#/ { next }
-    { print }
+    {
+      line = $0
+      # Remove any complete inline block comments first so real code on the
+      # same line survives.
+      while (match(line, /<#.*#>/)) {
+        line = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH)
+      }
+      if (in_doc) {
+        if (match(line, /#>/)) {
+          line = substr(line, RSTART + RLENGTH)
+          in_doc = 0
+        } else {
+          next
+        }
+      }
+      if (match(line, /<#/)) {
+        line = substr(line, 1, RSTART - 1)
+        in_doc = 1
+      }
+      if (line ~ /^[[:space:]]*#/) { next }
+      if (line ~ /^[[:space:]]*$/) { next }
+      print line
+    }
   ' "$1"
 }
 
@@ -82,7 +114,7 @@ require "$sh_code" 'sha256sum|shasum -a 256' "computes a SHA-256 checksum"
 # shellcheck disable=SC2016  # the pattern matches literal shell source text
 require "$sh_code" 'expected_checksum" != "\$actual_checksum' "compares the downloaded checksum"
 require "$sh_code" 'checksums-sha256\.txt' "downloads the published checksums file"
-forbid "$sh_code" 'curl[^|]*\|[[:space:]]*(ba)?sh' "does not pipe downloads into a shell"
+forbid "$sh_code" 'curl.*\|[[:space:]]*(ba)?sh([[:space:]]|$)' "does not pipe downloads into a shell"
 forbid "$sh_code" '(^|[^[:alnum:]_-])sudo([^[:alnum:]_-]|$)' "does not require elevated privileges"
 
 require "$ps_code" 'ErrorActionPreference = "Stop"' "aborts on errors"
