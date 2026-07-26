@@ -12,6 +12,9 @@
 .PARAMETER InstallDir
     Installation directory. Default: $env:LOCALAPPDATA\merge-mate
 
+.PARAMETER Force
+    Reinstall even if the target version is already installed.
+
 .EXAMPLE
     irm https://raw.githubusercontent.com/gitkraken/merge-mate-cli/main/install/install.ps1 | iex
 
@@ -21,7 +24,8 @@
 
 param(
     [string]$Version,
-    [string]$InstallDir
+    [string]$InstallDir,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +71,17 @@ function Get-ErrorDetail {
     return $Detail
 }
 
+function Test-VersionFormat {
+    param(
+        [string]$Value,
+        [string]$Source
+    )
+
+    if ($Value -notmatch "^\d+\.\d+\.\d+([.-][0-9A-Za-z]+)*$") {
+        Write-Err "Invalid version '$Value' from ${Source}. Expected a version like 0.1.0"
+    }
+}
+
 function Test-Architecture {
     if (-not [Environment]::Is64BitOperatingSystem) {
         Write-Err "Merge Mate CLI requires a 64-bit Windows installation"
@@ -91,7 +106,10 @@ function Get-LatestVersion {
         Write-Err "No stable release found for $Repo. Check the repository or pass -Version"
     }
 
-    return $CliRelease.tag_name -replace "^v", ""
+    $Resolved = $CliRelease.tag_name -replace "^v", ""
+    Test-VersionFormat -Value $Resolved -Source "the GitHub releases API"
+
+    return $Resolved
 }
 
 function Add-ToUserPath {
@@ -127,6 +145,28 @@ function Get-Checksum {
     return $Hash.Hash.ToLower()
 }
 
+function Get-InstalledVersion {
+    param([string]$Path)
+
+    try {
+        $Output = & $Path --version 2>$null
+    }
+    catch {
+        return $null
+    }
+
+    if ($LASTEXITCODE -ne 0 -or -not $Output) {
+        return $null
+    }
+
+    $Match = [regex]::Match(($Output -join "`n"), "\d+(\.\d+)+[0-9A-Za-z.+-]*")
+    if (-not $Match.Success) {
+        return $null
+    }
+
+    return $Match.Value
+}
+
 function Install-MergeMate {
     param(
         [string]$Version
@@ -137,10 +177,10 @@ function Install-MergeMate {
     $DownloadUrl = "https://github.com/$Repo/releases/download/$Tag/$BinaryName"
     $ChecksumsUrl = "https://github.com/$Repo/releases/download/$Tag/checksums-sha256.txt"
 
-    $TempDir = Join-Path $env:TEMP "merge-mate-install-$(Get-Random)"
+    $TempDir = Join-Path $env:TEMP "merge-mate-install-$([guid]::NewGuid().ToString('N'))"
 
     try {
-        New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $TempDir | Out-Null
     }
     catch {
         Write-Err "Failed to create temporary directory ${TempDir}: $($_.Exception.Message)"
@@ -215,23 +255,52 @@ function Install-MergeMate {
     }
 }
 
-try {
-    Test-Architecture
+function Invoke-Install {
+    try {
+        if ($Repo -ne "gitkraken/merge-mate-cli") {
+            Write-Warning "Downloading from $Repo instead of gitkraken/merge-mate-cli."
+            Write-Warning "Checksums are fetched from the same repository, so they do not prove authenticity."
+        }
 
-    if (-not $Version) {
-        Write-Info "Detecting latest version..."
-        $Version = Get-LatestVersion
+        Test-Architecture
+
+        if ($Version) {
+            Test-VersionFormat -Value $Version -Source "-Version"
+        }
+
+        if (-not $Version) {
+            Write-Info "Detecting latest version..."
+            $Version = Get-LatestVersion
+        }
+
+        if (-not $Force) {
+            $ExistingPath = Join-Path $InstallDir $BinName
+
+            if (Test-Path $ExistingPath) {
+                $InstalledVersion = Get-InstalledVersion -Path $ExistingPath
+
+                if ($InstalledVersion -eq $Version) {
+                    Write-Info "merge-mate v$Version is already installed at $ExistingPath"
+                    Write-Info "Use -Force to reinstall"
+                    exit 0
+                }
+            }
+        }
+
+        Install-MergeMate -Version $Version
+    }
+    catch {
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
     }
 
-    Install-MergeMate -Version $Version
-}
-catch {
-    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
+    Write-Host ""
+    Write-Host "✓ Merge Mate CLI v$Version installed successfully" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Run 'merge-mate --help' to get started"
+    exit 0
 }
 
-Write-Host ""
-Write-Host "✓ Merge Mate CLI v$Version installed successfully" -ForegroundColor Green
-Write-Host ""
-Write-Host "Run 'merge-mate --help' to get started"
-exit 0
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-Install
+}
