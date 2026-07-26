@@ -151,10 +151,14 @@ function Install-MergeMate {
     $DownloadUrl = "https://github.com/$Repo/releases/download/$Tag/$BinaryName"
     $ChecksumsUrl = "https://github.com/$Repo/releases/download/$Tag/checksums-sha256.txt"
 
-    $TempDir = Join-Path $env:TEMP "merge-mate-install-$(Get-Random)"
+    $TempDir = Join-Path $env:TEMP "merge-mate-install-$([guid]::NewGuid().ToString('N'))"
+
+    if (Test-Path $TempDir) {
+        Write-Err "Temporary directory $TempDir already exists; refusing to reuse it"
+    }
 
     try {
-        New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $TempDir | Out-Null
     }
     catch {
         Write-Err "Failed to create temporary directory ${TempDir}: $($_.Exception.Message)"
