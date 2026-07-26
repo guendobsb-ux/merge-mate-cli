@@ -74,7 +74,7 @@ Describe 'Get-LatestVersion' {
         Mock Invoke-RestMethod { @() }
         Mock Write-Err { throw "write-err: $Message" }
 
-        { Get-LatestVersion } | Should -Throw '*No CLI releases found*'
+        { Get-LatestVersion } | Should -Throw '*No stable release found*'
     }
 
     It 'errors when the releases request fails' {

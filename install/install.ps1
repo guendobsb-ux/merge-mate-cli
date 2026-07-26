@@ -179,10 +179,6 @@ function Install-MergeMate {
 
     $TempDir = Join-Path $env:TEMP "merge-mate-install-$([guid]::NewGuid().ToString('N'))"
 
-    if (Test-Path $TempDir) {
-        Write-Err "Temporary directory $TempDir already exists; refusing to reuse it"
-    }
-
     try {
         New-Item -ItemType Directory -Path $TempDir | Out-Null
     }
