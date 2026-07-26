@@ -135,16 +135,22 @@ function Install-MergeMate {
     }
 }
 
-Test-Architecture
+function Invoke-Install {
+    Test-Architecture
 
-if (-not $Version) {
-    Write-Info "Detecting latest version..."
-    $Version = Get-LatestVersion
+    if (-not $Version) {
+        Write-Info "Detecting latest version..."
+        $Version = Get-LatestVersion
+    }
+
+    Install-MergeMate -Version $Version
+
+    Write-Host ""
+    Write-Host "✓ Merge Mate CLI v$Version installed successfully" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Run 'merge-mate --help' to get started"
 }
 
-Install-MergeMate -Version $Version
-
-Write-Host ""
-Write-Host "✓ Merge Mate CLI v$Version installed successfully" -ForegroundColor Green
-Write-Host ""
-Write-Host "Run 'merge-mate --help' to get started"
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-Install
+}
