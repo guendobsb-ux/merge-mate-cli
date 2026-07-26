@@ -103,7 +103,7 @@ strip_shell_comments "$SH" >"$sh_code"
 strip_powershell_comments "$PS" >"$ps_code"
 
 for file in "$sh_code" "$ps_code"; do
-  forbid "$file" 'http://[^"[:space:]]' "uses only https URLs"
+  forbid "$file" 'http://[^[:space:]"]' "uses only https URLs"
   forbid "$file" '(^|[^[:alnum:]_-])(eval|iex|Invoke-Expression)([^[:alnum:]_-]|$)' "does not evaluate dynamic code"
   forbid "$file" 'base64 (-d|--decode)|FromBase64String' "does not decode base64 payloads"
   forbid "$file" 'curl -k|--insecure|-SkipCertificateCheck|ServerCertificateValidationCallback' "does not disable TLS verification"
