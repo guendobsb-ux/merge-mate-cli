@@ -47,6 +47,15 @@ info() {
   echo "==> $1"
 }
 
+validate_version() {
+  local version="$1"
+  local source="$2"
+
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+    error "Invalid version '$version' from $source. Expected a version like 0.1.0"
+  fi
+}
+
 detect_platform() {
   local os arch
 
@@ -103,11 +112,13 @@ get_latest_version() {
     error "GitHub API request failed with HTTP $http_status for $releases_url. Verify MERGE_MATE_REPO=$REPO or specify --version"
   fi
 
-  VERSION=$(echo "$releases" | grep -o '"tag_name": "v[^"]*"' | grep -v -- '-' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/') || true
+  VERSION=$(echo "$releases" | grep -o '"tag_name": *"v[0-9]\+\.[0-9]\+\.[0-9]\+"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/') || true
 
   if [[ -z "$VERSION" ]]; then
     error "No stable release found for $REPO. Check the repository or specify --version"
   fi
+
+  validate_version "$VERSION" "the GitHub releases API"
 }
 
 download_and_verify() {
@@ -212,7 +223,16 @@ main() {
     esac
   done
 
+  if [[ "$REPO" != "gitkraken/merge-mate-cli" ]]; then
+    echo "Warning: downloading from $REPO instead of gitkraken/merge-mate-cli." >&2
+    echo "Warning: checksums are fetched from the same repository, so they do not prove authenticity." >&2
+  fi
+
   detect_platform
+
+  if [[ -n "$VERSION" ]]; then
+    validate_version "$VERSION" "--version"
+  fi
 
   if [[ -z "$VERSION" ]]; then
     info "Detecting latest version..."
