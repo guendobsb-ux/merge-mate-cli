@@ -12,6 +12,9 @@
 .PARAMETER InstallDir
     Installation directory. Default: $env:LOCALAPPDATA\merge-mate
 
+.PARAMETER Force
+    Reinstall even if the target version is already installed.
+
 .EXAMPLE
     irm https://raw.githubusercontent.com/gitkraken/merge-mate-cli/main/install/install.ps1 | iex
 
@@ -21,7 +24,8 @@
 
 param(
     [string]$Version,
-    [string]$InstallDir
+    [string]$InstallDir,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -127,6 +131,28 @@ function Get-Checksum {
     return $Hash.Hash.ToLower()
 }
 
+function Get-InstalledVersion {
+    param([string]$Path)
+
+    try {
+        $Output = & $Path --version 2>$null
+    }
+    catch {
+        return $null
+    }
+
+    if ($LASTEXITCODE -ne 0 -or -not $Output) {
+        return $null
+    }
+
+    $Match = [regex]::Match(($Output -join "`n"), "\d+(\.\d+)+[0-9A-Za-z.+-]*")
+    if (-not $Match.Success) {
+        return $null
+    }
+
+    return $Match.Value
+}
+
 function Install-MergeMate {
     param(
         [string]$Version
@@ -222,6 +248,20 @@ function Invoke-Install {
         if (-not $Version) {
             Write-Info "Detecting latest version..."
             $Version = Get-LatestVersion
+        }
+
+        if (-not $Force) {
+            $ExistingPath = Join-Path $InstallDir $BinName
+
+            if (Test-Path $ExistingPath) {
+                $InstalledVersion = Get-InstalledVersion -Path $ExistingPath
+
+                if ($InstalledVersion -eq $Version) {
+                    Write-Info "merge-mate v$Version is already installed at $ExistingPath"
+                    Write-Info "Use -Force to reinstall"
+                    exit 0
+                }
+            }
         }
 
         Install-MergeMate -Version $Version
