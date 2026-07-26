@@ -7,6 +7,7 @@ BIN_NAME="merge-mate"
 VERSION=""
 PLATFORM=""
 FORCE=false
+KEEP_QUARANTINE=false
 TMP_DIR=""
 
 cleanup() {
@@ -28,6 +29,8 @@ Options:
   --version VERSION   Install specific version (e.g., 0.1.0)
   --dir DIRECTORY     Installation directory (default: ~/.local/bin)
   --force             Reinstall even if the target version is already installed
+  --keep-quarantine   Keep the macOS quarantine attribute on the downloaded binary
+                      (Gatekeeper will then inspect it on first run)
   --help              Show this help message
 
 Environment:
@@ -47,6 +50,15 @@ error() {
 
 info() {
   echo "==> $1"
+}
+
+validate_version() {
+  local version="$1"
+  local source="$2"
+
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+    error "Invalid version '$version' from $source. Expected a version like 0.1.0"
+  fi
 }
 
 detect_platform() {
@@ -105,11 +117,13 @@ get_latest_version() {
     error "GitHub API request failed with HTTP $http_status for $releases_url. Verify MERGE_MATE_REPO=$REPO or specify --version"
   fi
 
-  VERSION=$(echo "$releases" | grep -o '"tag_name": "v[^"]*"' | grep -v -- '-' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/') || true
+  VERSION=$(echo "$releases" | grep -o '"tag_name": *"v[0-9]\+\.[0-9]\+\.[0-9]\+"' | head -1 | sed 's/.*"v\([^"]*\)".*/\1/') || true
 
   if [[ -z "$VERSION" ]]; then
     error "No stable release found for $REPO. Check the repository or specify --version"
   fi
+
+  validate_version "$VERSION" "the GitHub releases API"
 }
 
 download_and_verify() {
@@ -156,7 +170,12 @@ download_and_verify() {
   info "Checksum verified"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    xattr -d com.apple.quarantine "$TMP_DIR/$binary_name" 2>/dev/null || true
+    if [[ "$KEEP_QUARANTINE" == true ]]; then
+      info "Keeping the macOS quarantine attribute; Gatekeeper will inspect the binary on first run"
+    else
+      info "Removing the macOS quarantine attribute (checksum was verified above; use --keep-quarantine to keep it)"
+      xattr -d com.apple.quarantine "$TMP_DIR/$binary_name" 2>/dev/null || true
+    fi
   fi
 
   mkdir -p "$INSTALL_DIR" || error "Failed to create installation directory $INSTALL_DIR"
@@ -217,6 +236,10 @@ main() {
         FORCE=true
         shift
         ;;
+      --keep-quarantine)
+        KEEP_QUARANTINE=true
+        shift
+        ;;
       --help)
         usage
         exit 0
@@ -227,7 +250,16 @@ main() {
     esac
   done
 
+  if [[ "$REPO" != "gitkraken/merge-mate-cli" ]]; then
+    echo "Warning: downloading from $REPO instead of gitkraken/merge-mate-cli." >&2
+    echo "Warning: checksums are fetched from the same repository, so they do not prove authenticity." >&2
+  fi
+
   detect_platform
+
+  if [[ -n "$VERSION" ]]; then
+    validate_version "$VERSION" "--version"
+  fi
 
   if [[ -z "$VERSION" ]]; then
     info "Detecting latest version..."

@@ -71,6 +71,17 @@ function Get-ErrorDetail {
     return $Detail
 }
 
+function Test-VersionFormat {
+    param(
+        [string]$Value,
+        [string]$Source
+    )
+
+    if ($Value -notmatch "^\d+\.\d+\.\d+([.-][0-9A-Za-z]+)*$") {
+        Write-Err "Invalid version '$Value' from ${Source}. Expected a version like 0.1.0"
+    }
+}
+
 function Test-Architecture {
     if (-not [Environment]::Is64BitOperatingSystem) {
         Write-Err "Merge Mate CLI requires a 64-bit Windows installation"
@@ -95,7 +106,10 @@ function Get-LatestVersion {
         Write-Err "No stable release found for $Repo. Check the repository or pass -Version"
     }
 
-    return $CliRelease.tag_name -replace "^v", ""
+    $Resolved = $CliRelease.tag_name -replace "^v", ""
+    Test-VersionFormat -Value $Resolved -Source "the GitHub releases API"
+
+    return $Resolved
 }
 
 function Add-ToUserPath {
@@ -163,10 +177,14 @@ function Install-MergeMate {
     $DownloadUrl = "https://github.com/$Repo/releases/download/$Tag/$BinaryName"
     $ChecksumsUrl = "https://github.com/$Repo/releases/download/$Tag/checksums-sha256.txt"
 
-    $TempDir = Join-Path $env:TEMP "merge-mate-install-$(Get-Random)"
+    $TempDir = Join-Path $env:TEMP "merge-mate-install-$([guid]::NewGuid().ToString('N'))"
+
+    if (Test-Path $TempDir) {
+        Write-Err "Temporary directory $TempDir already exists; refusing to reuse it"
+    }
 
     try {
-        New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $TempDir | Out-Null
     }
     catch {
         Write-Err "Failed to create temporary directory ${TempDir}: $($_.Exception.Message)"
@@ -243,7 +261,16 @@ function Install-MergeMate {
 
 function Invoke-Install {
     try {
+        if ($Repo -ne "gitkraken/merge-mate-cli") {
+            Write-Warning "Downloading from $Repo instead of gitkraken/merge-mate-cli."
+            Write-Warning "Checksums are fetched from the same repository, so they do not prove authenticity."
+        }
+
         Test-Architecture
+
+        if ($Version) {
+            Test-VersionFormat -Value $Version -Source "-Version"
+        }
 
         if (-not $Version) {
             Write-Info "Detecting latest version..."
